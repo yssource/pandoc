@@ -49,6 +49,7 @@ Data-Files:
                  data/templates/default.context
                  data/templates/default.texinfo
                  data/templates/default.man
+                 data/templates/default.ms
                  data/templates/default.markdown
                  data/templates/default.muse
                  data/templates/default.commonmark
@@ -382,6 +383,7 @@ Library
                    Text.Pandoc.Writers.OpenDocument,
                    Text.Pandoc.Writers.Texinfo,
                    Text.Pandoc.Writers.Man,
+                   Text.Pandoc.Writers.Ms,
                    Text.Pandoc.Writers.Markdown,
                    Text.Pandoc.Writers.CommonMark,
                    Text.Pandoc.Writers.Haddock,
