@@ -46,8 +46,8 @@ import Data.Char ( isDigit )
 import Text.TeXMath (writeEqn)
 
 type Notes = [[Block]]
-data WriterState = WriterState { stNotes  :: Notes
-                               , stHasTables :: Bool }
+data WriterState = WriterState { stNotes   :: Notes
+                               , stHasInlineMath :: Bool }
 
 type MS = StateT WriterState
 
@@ -86,10 +86,10 @@ pandocToMs opts (Pandoc meta blocks) = do
   notes <- liftM stNotes get
   notes' <- notesToMs opts (reverse notes)
   let main = render' $ body $$ notes' $$ text ""
-  hasTables <- liftM stHasTables get
+  hasInlineMath <- gets stHasInlineMath
   let context = defField "body" main
               $ setFieldsFromTitle
-              $ defField "has-tables" hasTables
+              $ defField "has-inline-math" hasInlineMath
               $ defField "hyphenate" True
               $ defField "pandoc-version" pandocVersion
               $ metadata
@@ -207,7 +207,6 @@ blockToMs opts (Table caption alignments widths headers rows) =
       aligncode AlignDefault = "l"
   in do
   caption' <- inlineListToMs opts caption
-  modify $ \st -> st{ stHasTables = True }
   let iwidths = if all (== 0) widths
                    then repeat ""
                    else map (printf "w(%0.1fn)" . (70 *)) widths
@@ -347,6 +346,7 @@ inlineToMs _ (Code _ str) =
   return $ text $ "\\f[C]" ++ escapeCode str ++ "\\f[]"
 inlineToMs _ (Str str) = return $ text $ escapeString str
 inlineToMs opts (Math InlineMath str) = do
+  modify $ \st -> st{ stHasInlineMath = True }
   res <- convertMath writeEqn InlineMath str
   case res of
        Left il -> inlineToMs opts il

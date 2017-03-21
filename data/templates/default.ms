@@ -6,8 +6,7 @@ $if(hyphenate)$
 $else$
 .nh \" Turn off hyphenation by default.
 $endif$
-$if(math)$
-.\"e
+$if(has-inline-math)$
 .EQ
 delim ||
 .EN
