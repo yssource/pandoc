@@ -6,6 +6,12 @@ $if(hyphenate)$
 $else$
 .nh \" Turn off hyphenation by default.
 $endif$
+$if(math)$
+.\"e
+.EQ
+delim ||
+.EN
+$endif$
 $if(title)$
 .TL
 $title$

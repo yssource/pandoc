@@ -43,6 +43,7 @@ import Text.Pandoc.Builder (deleteMeta)
 import Text.Pandoc.Class (PandocMonad)
 import Control.Monad.State
 import Data.Char ( isDigit )
+import Text.TeXMath (writeEqn)
 
 type Notes = [[Block]]
 data WriterState = WriterState { stNotes  :: Notes
@@ -119,6 +120,7 @@ manEscapes = [ ('\160', "\\ ")
              , ('\x2014', "\\[em]")
              , ('\x2013', "\\[en]")
              , ('\x2026', "\\&...")
+             , ('|', "\\[u007C]")  -- because we use | for inline math
              ] ++ backslashEscapes "-@\\"
 
 -- | Escape special characters for Ms.
@@ -344,11 +346,18 @@ inlineToMs opts (Cite _ lst) =
 inlineToMs _ (Code _ str) =
   return $ text $ "\\f[C]" ++ escapeCode str ++ "\\f[]"
 inlineToMs _ (Str str) = return $ text $ escapeString str
-inlineToMs opts (Math InlineMath str) =
-  inlineListToMs opts =<< texMathToInlines InlineMath str
+inlineToMs opts (Math InlineMath str) = do
+  res <- convertMath writeEqn InlineMath str
+  case res of
+       Left il -> inlineToMs opts il
+       Right r -> return $ text "|" <> text r <> text "|"
 inlineToMs opts (Math DisplayMath str) = do
-  contents <- inlineListToMs opts =<< texMathToInlines DisplayMath str
-  return $ cr <> text ".RS" $$ contents $$ text ".RE"
+  res <- convertMath writeEqn InlineMath str
+  case res of
+       Left il -> do
+         contents <- inlineToMs opts il
+         return $ cr <> text ".RS" $$ contents $$ text ".RE"
+       Right r -> return $ cr <> text ".EQ" $$ text r $$ text ".EN"
 inlineToMs _ (RawInline f str)
   | f == Format "man" = return $ text str
   | otherwise         = return empty
