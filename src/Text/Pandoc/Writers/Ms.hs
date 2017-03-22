@@ -45,16 +45,16 @@ import Control.Monad.State
 import Data.Char ( isDigit )
 import Text.TeXMath (writeEqn)
 
-type Notes = [[Block]]
-data WriterState = WriterState { stNotes   :: Notes
-                               , stHasInlineMath :: Bool }
+data WriterState = WriterState { stHasInlineMath :: Bool
+                               , stNotes :: [Note] }
+type Note = [Block]
 
 type MS = StateT WriterState
 
 -- | Convert Pandoc to Ms.
 writeMs :: PandocMonad m => WriterOptions -> Pandoc -> m String
 writeMs opts document =
-  evalStateT (pandocToMs opts document) (WriterState [] False)
+  evalStateT (pandocToMs opts document) (WriterState False [])
 
 -- | Return groff man representation of document.
 pandocToMs :: PandocMonad m => WriterOptions -> Pandoc -> MS m String
@@ -63,7 +63,7 @@ pandocToMs opts (Pandoc meta blocks) = do
                     then Just $ writerColumns opts
                     else Nothing
   let render' = render colwidth
-  titleText <- inlineListToMs opts $ docTitle meta
+  titleText <- inlineListToMs' opts $ docTitle meta
   let title' = render' titleText
   let setFieldsFromTitle =
        case break (== ' ') title' of
@@ -80,12 +80,10 @@ pandocToMs opts (Pandoc meta blocks) = do
                                    _  -> defField "title" title'
   metadata <- metaToJSON opts
               (fmap (render colwidth) . blockListToMs opts)
-              (fmap (render colwidth) . inlineListToMs opts)
+              (fmap (render colwidth) . inlineListToMs' opts)
               $ deleteMeta "title" meta
   body <- blockListToMs opts blocks
-  notes <- liftM stNotes get
-  notes' <- notesToMs opts (reverse notes)
-  let main = render' $ body $$ notes' $$ text ""
+  let main = render' body
   hasInlineMath <- gets stHasInlineMath
   let context = defField "body" main
               $ setFieldsFromTitle
@@ -96,21 +94,6 @@ pandocToMs opts (Pandoc meta blocks) = do
   case writerTemplate opts of
        Nothing  -> return main
        Just tpl -> return $ renderTemplate' tpl context
-
--- | Return man representation of notes.
-notesToMs :: PandocMonad m => WriterOptions -> [[Block]] -> MS m Doc
-notesToMs opts notes =
-  if null notes
-     then return empty
-     else mapM (\(num, note) -> noteToMs opts num note) (zip [1..] notes) >>=
-          return . (text ".SH NOTES" $$) . vcat
-
--- | Return man representation of a note.
-noteToMs :: PandocMonad m => WriterOptions -> Int -> [Block] -> MS m Doc
-noteToMs opts num note = do
-  contents <- blockListToMs opts note
-  let marker = cr <> text ".SS " <> brackets (text (show num))
-  return $ marker $$ contents
 
 -- | Association list of characters to escape.
 manEscapes :: [(Char, String)]
@@ -165,7 +148,6 @@ splitSentences xs =
   let (sent, rest) = breakSentence xs
   in  if null rest then [sent] else sent : splitSentences rest
 
--- | Convert Pandoc block element to man.
 blockToMs :: PandocMonad m
           => WriterOptions -- ^ Options
           -> Block         -- ^ Block element
@@ -173,9 +155,9 @@ blockToMs :: PandocMonad m
 blockToMs _ Null = return empty
 blockToMs opts (Div _ bs) = blockListToMs opts bs
 blockToMs opts (Plain inlines) =
-  liftM vcat $ mapM (inlineListToMs opts) $ splitSentences inlines
+  liftM vcat $ mapM (inlineListToMs' opts) $ splitSentences inlines
 blockToMs opts (Para inlines) = do
-  contents <- liftM vcat $ mapM (inlineListToMs opts) $
+  contents <- liftM vcat $ mapM (inlineListToMs' opts) $
     splitSentences inlines
   return $ text ".LP" $$ contents
 blockToMs _ (RawBlock f str)
@@ -183,7 +165,7 @@ blockToMs _ (RawBlock f str)
   | otherwise         = return empty
 blockToMs _ HorizontalRule = return $ text ".PP" $$ text "   *   *   *   *   *"
 blockToMs opts (Header level _ inlines) = do
-  contents <- inlineListToMs opts inlines
+  contents <- inlineListToMs' opts inlines
   let heading = if writerNumberSections opts
                    then ".NH"
                    else ".SH"
@@ -206,7 +188,7 @@ blockToMs opts (Table caption alignments widths headers rows) =
       aligncode AlignCenter  = "c"
       aligncode AlignDefault = "l"
   in do
-  caption' <- inlineListToMs opts caption
+  caption' <- inlineListToMs' opts caption
   let iwidths = if all (== 0) widths
                    then repeat ""
                    else map (printf "w(%0.1fn)" . (70 *)) widths
@@ -285,7 +267,7 @@ definitionListItemToMs :: PandocMonad m
                        -> ([Inline],[[Block]])
                        -> MS m Doc
 definitionListItemToMs opts (label, defs) = do
-  labelText <- inlineListToMs opts label
+  labelText <- inlineListToMs' opts label
   contents <- if null defs
                  then return empty
                  else liftM vcat $ forM defs $ \blocks -> do
@@ -308,13 +290,21 @@ blockListToMs :: PandocMonad m
 blockListToMs opts blocks =
   mapM (blockToMs opts) blocks >>= (return . vcat)
 
--- | Convert list of Pandoc inline elements to man.
+-- | Convert list of Pandoc inline elements to ms.
 inlineListToMs :: PandocMonad m => WriterOptions -> [Inline] -> MS m Doc
 -- if list starts with ., insert a zero-width character \& so it
 -- won't be interpreted as markup if it falls at the beginning of a line.
 inlineListToMs opts lst@(Str ('.':_) : _) = mapM (inlineToMs opts) lst >>=
   (return . (text "\\&" <>)  . hcat)
-inlineListToMs opts lst = mapM (inlineToMs opts) lst >>= (return . hcat)
+inlineListToMs opts lst = hcat <$> mapM (inlineToMs opts) lst
+
+-- This version to be used when there is no further inline content;
+-- forces a note at the end.
+inlineListToMs' :: PandocMonad m => WriterOptions -> [Inline] -> MS m Doc
+inlineListToMs' opts lst = do
+  x <- hcat <$> mapM (inlineToMs opts) lst
+  y <- handleNotes opts empty
+  return $ x <> y
 
 -- | Convert Pandoc inline element to man.
 inlineToMs :: PandocMonad m => WriterOptions -> Inline -> MS m Doc
@@ -364,16 +354,17 @@ inlineToMs _ (RawInline f str)
   | otherwise         = return empty
 inlineToMs _ (LineBreak) = return $
   cr <> text ".PD 0" $$ text ".P" $$ text ".PD" <> cr
-inlineToMs _ SoftBreak = return space
-inlineToMs _ Space = return space
+inlineToMs opts SoftBreak = handleNotes opts cr
+inlineToMs opts Space = handleNotes opts space
 inlineToMs opts (Link _ txt (src, _)) = do
-  linktext <- inlineListToMs opts txt
   let srcSuffix = fromMaybe src (stripPrefix "mailto:" src)
-  return $ case txt of
-           [Str s]
-             | escapeURI s == srcSuffix ->
-                                 char '<' <> text srcSuffix <> char '>'
-           _                  -> linktext <> text " (" <> text src <> char ')'
+  case txt of
+       [Str s]
+         | escapeURI s == srcSuffix ->
+             return $ char '<' <> text srcSuffix <> char '>'
+       _  -> do
+         let linknote = [Plain [Str src]]
+         inlineListToMs opts (txt ++ [Note linknote])
 inlineToMs opts (Image attr alternate (source, tit)) = do
   let txt = if (null alternate) || (alternate == [Str ""]) ||
                (alternate == [Str source]) -- to prevent autolinks
@@ -382,9 +373,20 @@ inlineToMs opts (Image attr alternate (source, tit)) = do
   linkPart <- inlineToMs opts (Link attr txt (source, tit))
   return $ char '[' <> text "IMAGE: " <> linkPart <> char ']'
 inlineToMs _ (Note contents) = do
-  -- add to notes in state
   modify $ \st -> st{ stNotes = contents : stNotes st }
-  notes <- liftM stNotes get
-  let ref = show $ (length notes)
-  return $ char '[' <> text ref <> char ']'
+  return $ text "\\**"
+
+handleNotes :: PandocMonad m => WriterOptions -> Doc -> MS m Doc
+handleNotes opts fallback = do
+  notes <- gets stNotes
+  if null notes
+     then return fallback
+     else do
+       modify $ \st -> st{ stNotes = [] }
+       vcat <$> mapM (handleNote opts) notes
+
+handleNote :: PandocMonad m => WriterOptions -> Note -> MS m Doc
+handleNote opts bs = do
+  contents <- blockListToMs opts bs
+  return $ cr <> text ".FS" $$ contents $$ text ".FE" <> cr
 
