@@ -27,6 +27,12 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 Conversion of 'Pandoc' documents to groff man page format.
 
+TODO:
+[ ] better handling of accented characters and other non-ascii
+    characters (e.g. curly quotes) -- we shouldn't rely on a
+    utf8 compatible groff
+[ ] avoid blank line after footnote marker when footnote has a
+    paragraph
 -}
 module Text.Pandoc.Writers.Ms ( writeMs ) where
 import Text.Pandoc.Definition
