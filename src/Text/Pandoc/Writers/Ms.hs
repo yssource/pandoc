@@ -106,6 +106,12 @@ manEscapes = [ ('\160', "\\ ")
              , ('|', "\\[u007C]")  -- because we use | for inline math
              ] ++ backslashEscapes "-@\\"
 
+-- | Escape | character, used to mark inline math, inside math.
+escapeBar :: String -> String
+escapeBar = concatMap go
+  where go '|' = "\\[u007C]"
+        go c   = [c]
+
 -- | Escape special characters for Ms.
 escapeString :: String -> String
 escapeString = escapeStringUsing manEscapes
@@ -341,14 +347,15 @@ inlineToMs opts (Math InlineMath str) = do
   res <- convertMath writeEqn InlineMath str
   case res of
        Left il -> inlineToMs opts il
-       Right r -> return $ text "|" <> text r <> text "|"
+       Right r -> return $ text "|" <> text (escapeBar r) <> text "|"
 inlineToMs opts (Math DisplayMath str) = do
   res <- convertMath writeEqn InlineMath str
   case res of
        Left il -> do
          contents <- inlineToMs opts il
          return $ cr <> text ".RS" $$ contents $$ text ".RE"
-       Right r -> return $ cr <> text ".EQ" $$ text r $$ text ".EN"
+       Right r -> return $
+            cr <> text ".EQ" $$ text (escapeBar r) $$ text ".EN"
 inlineToMs _ (RawInline f str)
   | f == Format "man" = return $ text str
   | otherwise         = return empty
